@@ -67,6 +67,20 @@ The benchmark dataset contains **198 queries** across **11 unique categories**:
 | NFTs | 2 |
 | Default / General Analysis | 1 |
 
+## Error taxonomy (definitions)
+
+Responses are scored on 7 binary (0/1) error dimensions:
+
+| # | Parameter | Definition |
+|---|-----------|------------|
+| 1 | Staleness / missing time bounds | Uses outdated/futuristic/irrelevant information or doesn't specify when the information is valid. |
+| 2 | Inconsistent claims | Answer contradicts itself or gives mutually incompatible statements. |
+| 3 | Source reconciliation failure | Multiple sources exist but the model ignores conflicts, picks one randomly, or doesn't explain discrepancies. |
+| 4 | Shallow synthesis | Response copies or paraphrases pieces without reasoning or combining insights. |
+| 5 | Missing risk or mechanism context | Gives answer but ignores risks, trade-offs, or underlying mechanism. |
+| 6 | Overconfident prediction | Makes strong claims about uncertain future events without probability or hedging. |
+| 7 | Partial or misframed answer | Doesn't fully answer the question or answers a wrong interpretation. |
+
 ## Requirements
 
 ### Prerequisites
