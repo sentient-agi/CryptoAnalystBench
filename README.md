@@ -86,7 +86,9 @@ The benchmark dataset contains **198 queries** across **11 unique categories**:
 - **Trace JSON files** at `output/{model_name}/traces/{chat_id}.json` (required)
 - Each trace JSON must contain spans with name `"Cyrpto Final Response"`
 
-Note:  change it based on how you are reaeding traces and collecting context.
+### For `run_error_taxonomy.py`:
+- **CSV file** with `query` and `{model}_response` (e.g. `sentient_response`); optional `{model}_chat_id` for trace context
+- **Trace JSON files** (optional) at `output/<model>/traces/<chat_id>.json`
 
 ## How to Run
 
@@ -149,6 +151,12 @@ The input CSV file must contain:
 
 **TL;DR.** Use `data/dataset.csv` for queries; generate one input file with LLM responses; place them under `data/input`; now you are good to go!
 
+## How traces are read and used
+
+Traces are **JSON files** at `<base>/<model>/traces/<chat_id>.json` (base is `output` depending on script). Code finds the span named **`"Cyrpto Final Response"`** and uses **`attributes.input.value`** for context (last message content when `messages` is present). citation_hallucination_check also uses **`attributes.output.value`** for the model response.
+
+- Note: Update code based on how you are reading traces and collecting context
+
 ## Customizing context for scoring
 
 The judge can score responses using **context** that was available to the model (e.g. retrieved documents or tool outputs). By default, context is read from trace files when your input CSV has per-model `{model_name}_chat_id` columns.
@@ -180,3 +188,24 @@ python citation_hallucination_check.py --csv data/dataset.csv --output-xlsx resu
 **Optional arguments**:
 - `--output-root`: Trace directory root (default: `output`)
 - `--models`: Comma-separated model names to filter (default: all)
+
+## Error Taxonomy
+
+Score a single model’s responses on 7 binary (0/1) error dimensions (staleness, inconsistent claims, source reconciliation, shallow synthesis, missing risk, overconfident prediction, partial/misframed answer).
+
+```bash
+python run_error_taxonomy.py --csv_path <path_to_csv> --model_column <response_column>
+```
+
+**Required**:
+- `--csv_path`: Input CSV path
+- `--model_column`: Response column name (e.g. `sentient_response`)
+
+**Optional**:
+- `--max_workers`: Concurrent workers (default: 5)
+- `--max_queries`: Limit number of queries (default: all)
+- `--output`: Output Excel path (default: `data/output/error_taxonomy_<timestamp>.xlsx`)
+
+**Input**: CSV with `query` and `{model}_response`; optional `{model}_chat_id` for trace context from `output/<model>/traces/`.
+
+**Output**: Excel (Evaluation Results + Summary) and CSV in `data/output/`.
