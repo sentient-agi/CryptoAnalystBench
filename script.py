@@ -11,17 +11,36 @@ import logging
 import random
 from itertools import permutations
 import argparse
+from pathlib import Path
 from src.llms.llm import Fireworks_LLM
 from src.llms.judge import ChatJudgeLLM
 import pytz
+
+# Trace context for scoring: span name and output base (same as llm_evaluation_system_with_context)
+TRACE_SPAN_NAME = "Cyrpto Final Response"
+OUTPUT_BASE = "output"
+
+
+def _trace_input_to_context(value: Any) -> str:
+    """Extract context from span attributes.input.value. Uses messages[-1].content when value has 'messages'; else string or json."""
+    if value is None:
+        return ""
+    if isinstance(value, dict) and "messages" in value:
+        messages = value.get("messages", [])
+        if not messages:
+            return ""
+        content = messages[-1].get("content", "")
+        return content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-IST = pytz.timezone('Asia/Kolkata')
-now_ist = datetime.now(IST)
-eval_datetime = now_ist.strftime("%d %B %Y")
+eval_datetime = datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%d %B %Y")
 @dataclass
 class ModelScore:
     """Data class to store model scores and reasoning for each parameter."""
@@ -41,34 +60,28 @@ class QueryEvaluation:
     model_scores: Dict[str, ModelScore]
     rankings: List[Tuple[str, int]]  # (model_name, rank) - single ranking including all models
     overall_analysis: str
-    evaluation_order: List[str]  # Order in which models were evaluated
-    original_positions: Dict[str, int]  # Original position of each model before randomization
 
 class LLMEvaluationSystem:
     """Comprehensive LLM evaluation system using Deepseek as judge."""
     
-    def __init__(self, csv_path: str, models_to_evaluate: List[str], api_key: str = None, num_workers: int = 3):
+    def __init__(self, csv_path: str, models_to_evaluate: List[str], num_workers: int = 3):
         """
         Initialize the evaluation system.
-        
+
         Args:
             csv_path: Path to the CSV file containing evaluation data
             models_to_evaluate: List of model names to evaluate (e.g., ['sentient', 'gemini_3_pro', 'gpt5', 'pplx_pro'])
-            api_key: Deepseek API key (if not provided, uses environment variable)
             num_workers: Number of parallel workers for processing queries (default: 3)
         """
         self.csv_path = csv_path
         self.models_to_evaluate = models_to_evaluate
         self.num_workers = num_workers
         self.df = None
-        self.judge_llm = None
         self.evaluations = []
-        
+        self.model_to_chat_id_column = {}
+
         # Initialize balanced randomization
         self._init_balanced_randomization()
-        
-        # Initialize Deepseek as judge
-        self._initialize_judge(api_key)
     
     def _init_balanced_randomization(self):
         """
@@ -100,61 +113,6 @@ class LLMEvaluationSystem:
             self.permutation_counter += 1
             return list(permutation)
         
-    def _initialize_judge(self, api_key: str = None):
-        """Initialize Deepseek as the judge LLM with chat completion support."""
-        try:
-            # Create the underlying Fireworks LLM
-            fireworks_llm = Fireworks_LLM(
-                model_id="accounts/fireworks/models/deepseek-v3p1",
-                api_key=api_key,
-                temperature=0.1,
-                max_tokens=10000,
-            )
-            
-            # Create system prompt for the judge
-            system_prompt = f"""You are an expert LLM evaluator specialized in crypto/blockchain domain evaluation. 
-Current evaluation date and time: {eval_datetime}
-
-You will evaluate responses on 4 key parameters with detailed criteria:
-
-1. TEMPORAL RELEVANCE (1-10): How current and timely is the information?
-   - Does it reflect recent data, events, or market conditions?
-   - Is the information up-to-date for crypto/blockchain context?
-   - Does it avoid outdated or stale information?
-   - Consider the current date ({eval_datetime}) when evaluating temporal relevance
-
-2. DATA CONSISTENCY (1-10): How consistent and contradiction-free is the information within the response?
-   - Are there any contradictions between different claims made in the response?
-   - Do the statements, facts, and conclusions presented align with each other logically?
-   - Are there conflicting pieces of information about the same topic within the response?
-   - Do the numbers, dates, or metrics mentioned remain consistent throughout the response?
-   - Are there any logical inconsistencies or self-contradictory statements?
-   - Does the response maintain internal coherence without conflicting claims?
-
-3. DEPTH (1-10): How comprehensive and detailed is the response?
-   - Does it provide sufficient technical detail for blockchain concepts, protocols, and implementations?
-   - Are complex blockchain concepts (consensus mechanisms, smart contracts, DeFi protocols) explained clearly?
-   - Is the response well-organized with clear sections for technical analysis, market data, and risk assessment?
-   - Are formulas, calculations, financial metrics, and technical specifications presented clearly?
-   - Does the response address all relevant aspects of the crypto query with appropriate depth?
-
-4. RELEVANCE (1-10): How well does the response address the specific question asked?
-   - Does the response directly address the specific crypto question asked?
-   - Does it provide practical information for crypto decision-making (investment, development, security)?
-   - Does it appropriately highlight risks, limitations, and security considerations?
-   - Is the information applicable to real-world crypto scenarios (trading, DeFi, development)?
-   - Does it help users understand complex crypto concepts and make informed decisions?
-
-You will maintain consistency across evaluations and provide detailed reasoning for all scores and rankings.
-Always respond in valid JSON format as requested. All responses must be in English only."""
-            
-            # Wrap with ChatJudgeLLM for conversation history
-            self.judge_llm = ChatJudgeLLM(fireworks_llm, system_prompt)
-            logger.info("Deepseek judge LLM with chat completion initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Deepseek judge: {e}")
-            raise
-    
     def load_data(self) -> pd.DataFrame:
         """Load and preprocess the CSV data, reading response for each model."""
         try:
@@ -174,7 +132,15 @@ Always respond in valid JSON format as requested. All responses must be in Engli
             
             # Create a mapping from model name to response column
             self.model_to_column = {model: f"{model}_response" for model in self.models_to_evaluate}
-            
+
+            # Per-model chat_id for trace context: <model>_chat_id
+            for model_name in self.models_to_evaluate:
+                chat_id_col = f"{model_name}_chat_id"
+                if chat_id_col in self.df.columns:
+                    self.model_to_chat_id_column[model_name] = chat_id_col
+            if self.model_to_chat_id_column:
+                logger.info(f"Using per-model _chat_id columns for trace context from {OUTPUT_BASE}/<model>/traces/")
+
             # Filter rows with valid queries and at least one response
             self.df = self.df[self.df['query'].notna() & (self.df['query'] != '')]
             # Filter rows where at least one response exists
@@ -197,15 +163,47 @@ Always respond in valid JSON format as requested. All responses must be in Engli
         except Exception as e:
             logger.error(f"Error loading data: {e}")
             raise
-    
-    def _create_scoring_prompt(self, query: str, response: str, response_num: int) -> str:
+
+    def get_context(self, row: pd.Series, model_name: str) -> str:
+        """
+        Read traces for this row/model and return the final context string to use when scoring.
+        Uses model_to_chat_id_column to get chat_id, loads output/<model>/traces/<chat_id>.json,
+        finds span TRACE_SPAN_NAME and returns its attributes.input.value as context; returns "" if missing.
+        """
+        chat_id_col = self.model_to_chat_id_column.get(model_name)
+        if not chat_id_col:
+            return ""
+        chat_id = row.get(chat_id_col)
+        if pd.isna(chat_id) or not str(chat_id).strip():
+            return ""
+        chat_id = str(chat_id).strip()
+        trace_path = Path(OUTPUT_BASE) / model_name / "traces" / f"{chat_id}.json"
+        if not trace_path.exists():
+            return ""
+        with open(trace_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        for trace in data.get("traces", []):
+            for span in trace.get("spans", []):
+                if span.get("name") == TRACE_SPAN_NAME:
+                    return _trace_input_to_context(span.get("attributes.input.value")) or ""
+        return ""
+
+    def _create_scoring_prompt(self, query: str, response: str, response_num: int, trace_context: str = None) -> str:
         """Create prompt for scoring a single model response using detailed quality check criteria."""
+        context_block = ""
+        if trace_context and trace_context.strip():
+            context_block = f"""
+CONTEXT THAT WAS AVAILABLE TO THE MODEL (evaluate factual accuracy and relevance against this context only; do not use your own knowledge):
+---
+{trace_context}
+---
+"""
         return f"""Now I need you to evaluate response #{response_num} for this query:
 
 EVALUATION DATE AND TIME: {eval_datetime}
 
 QUERY: {query}
-
+{context_block}
 RESPONSE #{response_num}: {response}
 
 Please score this response on the 4 parameters using the detailed evaluation criteria below (1-10 scale) and provide your reasoning.
@@ -389,12 +387,14 @@ Always respond in valid JSON format as requested. All responses must be in Engli
             if pd.isna(response):
                 response = ""
             models[model_name] = str(response)
-        
+
         # Use provided judge_llm or create a new one for this query (ensures thread isolation)
         if judge_llm is None:
             judge_llm = self._create_judge_llm()
         
         logger.info(f"Evaluating query: {query[:100]}...")
+        if any(self.get_context(row, m) for m in self.models_to_evaluate):
+            logger.info("Using trace context for scoring")
         
         # Clear conversation history for this new query evaluation
         judge_llm.clear_conversation_history()
@@ -403,9 +403,7 @@ Always respond in valid JSON format as requested. All responses must be in Engli
         permutation = await self._get_balanced_permutation()
         # Apply permutation to models
         model_list = [self.models_to_evaluate[i] for i in permutation]
-        original_positions = {model: i+1 for i, model in enumerate(self.models_to_evaluate)}
-        
-        logger.info(f"Evaluation order: {model_list} (original positions: {[original_positions[m] for m in model_list]})")
+        logger.info(f"Evaluation order: {model_list}")
         
         # Step 1: Score each model in randomized order with retry logic
         model_scores = {}
@@ -428,7 +426,8 @@ Always respond in valid JSON format as requested. All responses must be in Engli
             
             while retry_count < max_retries and not success:
                 try:
-                    prompt = self._create_scoring_prompt(query, response, eval_pos)
+                    trace_context = self.get_context(row, model_name)
+                    prompt = self._create_scoring_prompt(query, response, eval_pos, trace_context=trace_context)
                     result = await judge_llm.a_generate(prompt)
                     
                     # Clean and validate JSON response
@@ -565,9 +564,7 @@ Always respond in valid JSON format as requested. All responses must be in Engli
             query=query,
             model_scores=model_scores,
             rankings=rankings,
-            overall_analysis=overall_reasoning,
-            evaluation_order=model_list,
-            original_positions=original_positions
+            overall_analysis=overall_reasoning
         )
     
     async def evaluate_all_queries(self, max_queries: int = None) -> List[QueryEvaluation]:
@@ -750,7 +747,7 @@ Total Queries Evaluated: {total_queries}
         logger.info(f"Evaluation results CSV saved to {output_path}")
         return output_path
     
-    def calculate_tag_metrics(self, results_csv_path: str, target_tags: List[str] = None) -> Dict[str, Dict[str, Any]]:
+    def calculate_tag_metrics(self, results_csv_path: str) -> Dict[str, Dict[str, Any]]:
         """Calculate comprehensive metrics for each tag from the results CSV."""
         logger.info("Calculating tag metrics...")
         
@@ -787,17 +784,15 @@ Total Queries Evaluated: {total_queries}
         for _, row in model_rows.iterrows():
             tags = self.extract_tags_from_list(row['tags'])
             for tag in tags:
-                # Filter by target tags if specified
-                if target_tags is None or tag in target_tags:
-                    tag_data.append({
-                        'tag': tag,
-                        'query': row['query'],
-                        'rank': row['rank'],
-                        'temporal_relevance': row['temporal_relevance'],
-                        'data_consistency': row['data_consistency'],
-                        'depth': row['depth'],
-                        'relevance': row['relevance']
-                    })
+                tag_data.append({
+                    'tag': tag,
+                    'query': row['query'],
+                    'rank': row['rank'],
+                    'temporal_relevance': row['temporal_relevance'],
+                    'data_consistency': row['data_consistency'],
+                    'depth': row['depth'],
+                    'relevance': row['relevance']
+                })
         
         if not tag_data:
             logger.info("No tag data found for analysis")
@@ -839,10 +834,7 @@ Total Queries Evaluated: {total_queries}
                 'ranks': tag_subset['rank'].tolist()
             }
         
-        if target_tags:
-            logger.info(f"Calculated metrics for {len(tag_metrics)} target tags: {target_tags}")
-        else:
-            logger.info(f"Calculated metrics for {len(tag_metrics)} tags")
+        logger.info(f"Calculated metrics for {len(tag_metrics)} tags")
         return tag_metrics
     
     def calculate_per_model_statistics(self) -> Dict[str, Dict[str, Any]]:
@@ -914,7 +906,167 @@ Total Queries Evaluated: {total_queries}
             }
         
         return model_stats
-    
+
+    async def perform_error_analysis_per_model(self, judge_llm: ChatJudgeLLM = None, batch_size: int = 50) -> Dict[str, Any]:
+        """
+        Perform per-model error taxonomy: for each model and metric, cluster low-score (<=8) patterns.
+        Returns dict with 'per_model', 'total_queries', 'models_evaluated'.
+        """
+        if not self.evaluations:
+            raise ValueError("No evaluations to analyze. Run evaluate_all_queries first.")
+        if judge_llm is None:
+            judge_llm = self._create_judge_llm()
+        metrics = ['temporal_relevance', 'data_consistency', 'depth', 'relevance']
+        metric_reasoning_map = {
+            'temporal_relevance': 'temporal_reasoning',
+            'data_consistency': 'data_consistency_reasoning',
+            'depth': 'depth_reasoning',
+            'relevance': 'relevance_reasoning'
+        }
+        model_metric_data = {m: {met: [] for met in metrics} for m in self.models_to_evaluate}
+        for eval in self.evaluations:
+            for model_name, scores in eval.model_scores.items():
+                for metric in metrics:
+                    score = getattr(scores, metric)
+                    reasoning = getattr(scores, metric_reasoning_map[metric])
+                    model_metric_data[model_name][metric].append({
+                        'query': eval.query, 'score': score, 'reasoning': reasoning
+                    })
+        total_queries = len(self.evaluations)
+        error_analysis = {
+            'per_model': {},
+            'total_queries': total_queries,
+            'models_evaluated': self.models_to_evaluate.copy()
+        }
+        for model_name in self.models_to_evaluate:
+            logger.info(f"Analyzing errors for model: {model_name}")
+            error_analysis['per_model'][model_name] = {}
+            for metric in metrics:
+                data = model_metric_data[model_name][metric]
+                low_score_data = [d for d in data if d['score'] <= 8]
+                if not low_score_data:
+                    error_analysis['per_model'][model_name][metric] = {
+                        'error_clusters': [], 'total_low_scores': 0, 'message': 'No low scores found for this metric'
+                    }
+                    continue
+                all_batch_clusters = await self._process_error_analysis_batches(
+                    judge_llm, model_name, metric, low_score_data, batch_size
+                )
+                final_clusters, summary = await self._synthesize_error_clusters(
+                    judge_llm, model_name, metric, all_batch_clusters, len(low_score_data)
+                )
+                error_analysis['per_model'][model_name][metric] = {
+                    'error_clusters': final_clusters,
+                    'total_low_scores': len(low_score_data),
+                    'summary': summary
+                }
+                logger.info(f"  {metric}: {len(final_clusters)} error clusters from {len(low_score_data)} low scores")
+        return error_analysis
+
+    async def _process_error_analysis_batches(
+        self, judge_llm: ChatJudgeLLM, model_name: str, metric: str,
+        low_score_data: List[Dict], batch_size: int
+    ) -> List[Dict]:
+        """Process error analysis in batches (per-model only)."""
+        all_batch_clusters = []
+        num_batches = (len(low_score_data) + batch_size - 1) // batch_size
+        for batch_idx in range(num_batches):
+            start_idx = batch_idx * batch_size
+            end_idx = min(start_idx + batch_size, len(low_score_data))
+            batch_data = low_score_data[start_idx:end_idx]
+            judge_llm.clear_conversation_history()
+            prompt = self._create_error_analysis_batch_prompt(model_name, metric, batch_data, batch_idx + 1, num_batches)
+            for _ in range(3):
+                result = await judge_llm.a_generate(prompt)
+                result = result.strip()
+                if "```json" in result:
+                    result = result.split("```json")[1].split("```")[0].strip()
+                elif "```" in result:
+                    result = result.split("```")[1].split("```")[0].strip()
+                analysis_data = json.loads(result)
+                clusters = analysis_data.get('error_clusters', [])
+                all_batch_clusters.extend(clusters)
+                break
+        return all_batch_clusters
+
+    async def _synthesize_error_clusters(
+        self, judge_llm: ChatJudgeLLM, model_name: str, metric: str,
+        all_batch_clusters: List[Dict], total_low_scores: int
+    ) -> Tuple[List[Dict], str]:
+        """Synthesize batch clusters into final per-model error clusters."""
+        if not all_batch_clusters:
+            return [], "No error patterns found."
+        if len(all_batch_clusters) <= 5:
+            return all_batch_clusters, f"Found {len(all_batch_clusters)} error patterns from {total_low_scores} low-scoring entries."
+        judge_llm.clear_conversation_history()
+        prompt = self._create_error_synthesis_prompt(model_name, metric, all_batch_clusters, total_low_scores)
+        for _ in range(3):
+            result = await judge_llm.a_generate(prompt)
+            result = result.strip()
+            if "```json" in result:
+                result = result.split("```json")[1].split("```")[0].strip()
+            elif "```" in result:
+                result = result.split("```")[1].split("```")[0].strip()
+            synthesis_data = json.loads(result)
+            final_clusters = synthesis_data.get('error_clusters', [])
+            summary = synthesis_data.get('summary', '')
+            return final_clusters, summary
+        return all_batch_clusters[:10], "Synthesis incomplete."
+
+    def _create_error_analysis_batch_prompt(self, model_name: str, metric: str, batch_data: List[Dict], batch_num: int, total_batches: int) -> str:
+        """Create prompt for a batch of per-model error analysis."""
+        examples_text = "\n\n---\n\n".join([
+            f"Query: {d['query']}\nScore: {d['score']}\nReasoning: {d['reasoning']}" for d in batch_data
+        ])
+        metric_display = metric.replace('_', ' ').title()
+        return f"""Analyze the following low-scoring evaluations for model "{model_name}" on the "{metric_display}" metric.
+This is batch {batch_num} of {total_batches}.
+
+Identify COMMON ERROR PATTERNS. Group similar issues into distinct error clusters. For each cluster provide examples and occurrence count in this batch.
+
+EVALUATION DATA ({len(batch_data)} entries):
+{examples_text}
+
+Respond with ONLY valid JSON:
+{{
+    "error_clusters": [
+        {{
+            "error_type": "<Name of the error pattern>",
+            "description": "<Description of the error pattern>",
+            "occurrence_count": <count in this batch>,
+            "severity": "<high/medium/low>",
+            "example_queries": ["<query1>", "<query2>"],
+            "example_issues": ["<issue1>", "<issue2>"]
+        }}
+    ]
+}}"""
+
+    def _create_error_synthesis_prompt(self, model_name: str, metric: str, all_clusters: List[Dict], total_low_scores: int) -> str:
+        """Create prompt for synthesizing per-model error clusters."""
+        clusters_text = json.dumps(all_clusters, indent=2)
+        metric_display = metric.replace('_', ' ').title()
+        return f"""You analyzed {total_low_scores} low-scoring evaluations for model "{model_name}" on "{metric_display}" in multiple batches.
+
+Merge similar error patterns, aggregate occurrence counts, consolidate into the main patterns. Provide an overall summary.
+
+RAW ERROR PATTERNS FROM ALL BATCHES:
+{clusters_text}
+
+Respond with ONLY valid JSON:
+{{
+    "error_clusters": [
+        {{
+            "error_type": "<Consolidated error pattern name>",
+            "description": "<Comprehensive description>",
+            "occurrence_count": <aggregated count>,
+            "severity": "<high/medium/low>",
+            "example_queries": ["<query1>", "<query2>", "<query3>"],
+            "example_issues": ["<issue1>", "<issue2>", "<issue3>"]
+        }}
+    ],
+    "summary": "<Summary of main issues for {model_name} on {metric_display}>"
+}}"""
+
     def extract_tags_from_string(self, tags_str):
         """Extract tags from string representation of list or direct text format."""
         try:
@@ -1061,15 +1213,14 @@ Total Queries Evaluated: {total_queries}
         
         return results_df
     
-    def save_statistics_xlsx(self, output_path: str = None, tag_metrics: Dict[str, Dict[str, Any]] = None, insights: Dict[str, Dict[str, Any]] = None) -> str:
+    def save_statistics_xlsx(self, output_path: str = None, error_analysis: Dict[str, Any] = None) -> str:
         """
         Save all statistics to a single XLSX file with multiple sheets.
-        
+
         Args:
             output_path: Path to output XLSX file (None for auto-generated)
-            tag_metrics: Optional tag metrics dictionary (unused, kept for compatibility)
-            insights: Optional insights dictionary (unused, kept for compatibility)
-            
+            error_analysis: Optional per-model error taxonomy from perform_error_analysis_per_model().
+
         Returns:
             Path to the saved XLSX file
         """
@@ -1084,7 +1235,6 @@ Total Queries Evaluated: {total_queries}
         
         # Calculate statistics
         model_stats = self.calculate_per_model_statistics()
-        num_models = len(self.models_to_evaluate)
         
         # Create Excel writer
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
@@ -1174,6 +1324,33 @@ Total Queries Evaluated: {total_queries}
                     logger.info("No tag-wise rankings data available")
             except Exception as e:
                 logger.warning(f"Could not generate tag-wise rankings: {e}")
+
+            # Sheet 4: Per-Model Error Analysis (always present)
+            per_model_data = []
+            if error_analysis and error_analysis.get('per_model'):
+                total_queries = error_analysis.get('total_queries', 0)
+                for model_name, model_data in error_analysis['per_model'].items():
+                    for metric, metric_data in model_data.items():
+                        metric_display = metric.replace('_', ' ').title()
+                        clusters = metric_data.get('error_clusters', [])
+                        total_low = metric_data.get('total_low_scores', 0)
+                        for cluster in clusters:
+                            per_model_data.append({
+                                'Model': model_name,
+                                'Metric': metric_display,
+                                'Error Type': cluster.get('error_type', 'Unknown'),
+                                'Description': cluster.get('description', ''),
+                                'Occurrence Count': cluster.get('occurrence_count', 0),
+                                'Total Low Scores': total_low,
+                                'Total Queries': total_queries,
+                                'Severity': cluster.get('severity', 'medium'),
+                                'Example Queries': '; '.join(cluster.get('example_queries', [])),
+                                'Example Issues': '; '.join(cluster.get('example_issues', []))
+                            })
+            columns = ['Model', 'Metric', 'Error Type', 'Description', 'Occurrence Count', 'Total Low Scores', 'Total Queries', 'Severity', 'Example Queries', 'Example Issues']
+            df_per_model = pd.DataFrame(per_model_data, columns=columns) if per_model_data else pd.DataFrame(columns=columns)
+            df_per_model.to_excel(writer, sheet_name='Error Analysis - Per Model', index=False)
+            logger.info("Per-model error analysis sheet written to XLSX")
             
         
         logger.info(f"Statistics XLSX saved to {output_path}")
@@ -1201,12 +1378,6 @@ Example:
                        help='Number of parallel workers for processing queries')
     parser.add_argument('--max_queries', type=int, default=None,
                        help='Maximum number of queries to evaluate (None for all)')
-    parser.add_argument('--target_tags', type=str, nargs='+', default=None,
-                       help='List of tags to filter analysis (None for all tags)')
-    
-    # Keep --all flag for backward compatibility (always runs all steps now)
-    parser.add_argument('--all', action='store_true',
-                       help='Run all evaluation steps (always enabled by default)')
     
     return parser.parse_args()
 
@@ -1226,23 +1397,19 @@ async def main():
     
     # Step 1: Run evaluations
     logger.info("Starting evaluation of all queries...")
-    evaluations = await evaluator.evaluate_all_queries(args.max_queries)
+    await evaluator.evaluate_all_queries(args.max_queries)
     
     # Step 2: Calculate tag metrics
     logger.info("Calculating tag metrics...")
     csv_output_path = evaluator.create_evaluation_results_csv()
-    tag_metrics = evaluator.calculate_tag_metrics(csv_output_path, args.target_tags)
+    evaluator.calculate_tag_metrics(csv_output_path)
     
-    # Step 3: Tag-wise rankings
-    logger.info("Calculating tag-wise rankings...")
-    tag_wise_df = evaluator.calculate_tag_wise_rankings()
-    
-    # Step 4: Generate summary report
+    # Step 3: Generate summary report
     logger.info("Generating summary report...")
     report = evaluator.generate_summary_report()
     print(report)
     
-    # Step 5: Per-model statistics
+    # Step 4: Per-model statistics
     logger.info("Calculating per-model statistics...")
     model_stats = evaluator.calculate_per_model_statistics()
     for model_name, stats in model_stats.items():
@@ -1255,16 +1422,16 @@ async def main():
                 if metric_type in stats:
                     m = stats[metric_type]
                     print(f"  {metric_type.replace('_', ' ').title()}: Mean={m['mean']:.2f}, Std={m['std']:.2f}")
-    
-    # Step 6: Save final XLSX file
+
+    # Step 5: Per-model error taxonomy
+    logger.info("Running per-model error analysis...")
+    error_analysis = await evaluator.perform_error_analysis_per_model(batch_size=50)
+
+    # Step 6: Save final XLSX
     logger.info("Saving evaluation statistics to XLSX...")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     xlsx_path = os.path.join('data/output', f"evaluation_statistics_{timestamp}.xlsx")
-    stats_path = evaluator.save_statistics_xlsx(
-        output_path=xlsx_path,
-        tag_metrics=None,
-        insights=None
-    )
+    stats_path = evaluator.save_statistics_xlsx(output_path=xlsx_path, error_analysis=error_analysis)
     print(f"XLSX file saved to: {stats_path}")
     
     # Delete temporary CSV file (XLSX contains all the same data)

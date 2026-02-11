@@ -67,6 +67,27 @@ The benchmark dataset contains **198 queries** across **11 unique categories**:
 | NFTs | 2 |
 | Default / General Analysis | 1 |
 
+## Requirements
+
+### Prerequisites
+- Python 3.12+
+- Virtual environment (recommended)
+- API key: `FIREWORKS_API_KEY` or `OPENAI_API_KEY` in `.env` file
+
+### For `script.py`:
+- **CSV file** with:
+  - `query` column (required)
+  - `{model_name}_response` columns for each model (required, e.g., `sentient_response`, `gpt5_response`)
+  - `tags` column (optional)
+  - `{model_name}_chat_id` columns (optional, for trace context)
+
+### For `citation_hallucination_check.py`:
+- **CSV file** with `{model_name}_chat_id` columns (required, e.g., `Sentient_chat_id`, `gpt5_chat_id`)
+- **Trace JSON files** at `output/{model_name}/traces/{chat_id}.json` (required)
+- Each trace JSON must contain spans with name `"Cyrpto Final Response"`
+
+Note:  change it based on how you are reaeding traces and collecting context.
+
 ## How to Run
 
 1. **Set up virtual environment**:
@@ -127,3 +148,47 @@ The input CSV file must contain:
 | What's the Bitcoin fear and greed index today? | Macro & Narrative Context | Response from Sentient... | Response from GPT5... | Response from Grok4... | Response from PPLX... |
 
 **TL;DR.** Use `data/dataset.csv` for queries; generate one input file with LLM responses; place them under `data/input`; now you are good to go!
+
+## Customizing context for scoring
+
+The judge can score responses using **context** that was available to the model (e.g. retrieved documents or tool outputs). By default, context is read from trace files when your input CSV has per-model `{model_name}_chat_id` columns.
+
+To use your own context source (different traces, APIs, or column layout), update the **`get_context`** function in `script.py`:
+
+- **Signature**: `get_context(self, row: pd.Series, model_name: str) -> str`
+- **Inputs**: `row` is the current CSV row; `model_name` is the model being scored.
+- **Return**: A single string containing the context that was available to that model for this query. Return `""` when no context should be injected (scoring will still run without the context block).
+
+**Example** (custom column or API):
+
+```python
+def get_context(self, row: pd.Series, model_name: str) -> str:
+    # e.g. read from a column like my_context_sentient, my_context_gpt5
+    col = f"my_context_{model_name}"
+    if col in row.index and pd.notna(row.get(col)):
+        return str(row[col]).strip()
+    return ""
+```
+
+After changing `get_context`, ensure your input CSV has the columns or data your logic expects (e.g. `{model_name}_chat_id` for the default trace-based implementation).
+
+## Citation and Hallucination Check
+
+Run citation and hallucination evaluation on trace files:
+
+```bash
+python citation_hallucination_check.py --csv <input_csv> --output-xlsx <output.xlsx>
+```
+
+**Example**:
+```bash
+python citation_hallucination_check.py --csv data/dataset.csv --output-xlsx results/citation_hallucination.xlsx --models Sentient
+```
+
+**Output**: Excel file with two sheets:
+- **Citation**: Citation accuracy metrics (precision, completeness, missing citations)
+- **Hallucination**: Factual verification metrics (verified vs fabricated claims)
+
+**Optional arguments**:
+- `--output-root`: Trace directory root (default: `output`)
+- `--models`: Comma-separated model names to filter (default: all)
