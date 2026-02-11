@@ -155,20 +155,8 @@ The judge can score responses using **context** that was available to the model 
 
 To use your own context source (different traces, APIs, or column layout), update the **`get_context`** function in `script.py`:
 
-- **Signature**: `get_context(self, row: pd.Series, model_name: str) -> str`
 - **Inputs**: `row` is the current CSV row; `model_name` is the model being scored.
 - **Return**: A single string containing the context that was available to that model for this query. Return `""` when no context should be injected (scoring will still run without the context block).
-
-**Example** (custom column or API):
-
-```python
-def get_context(self, row: pd.Series, model_name: str) -> str:
-    # e.g. read from a column like my_context_sentient, my_context_gpt5
-    col = f"my_context_{model_name}"
-    if col in row.index and pd.notna(row.get(col)):
-        return str(row[col]).strip()
-    return ""
-```
 
 After changing `get_context`, ensure your input CSV has the columns or data your logic expects (e.g. `{model_name}_chat_id` for the default trace-based implementation).
 
