@@ -30,8 +30,9 @@
 
 <p align="center">
   <a href="data/dataset.csv">Dataset</a>  •
-  <a href="https://blog.sentient.xyz">Technical Blog</a> •
-  Paper (Coming soon)
+  <a href="https://www.sentient.xyz/blog/cryptoanalystbench">Technical Blog</a> •
+  <a href="https://arxiv.org/pdf/2602.11304">Paper</a>
+  
 </p>
 
 Long-form response quality evaluation harness for Web3/crypto domain queries. This system can be used to evaluate multiple AI responses using a judge LLM (Deepseek-V3.1-671B by default) on four key parameters: <b>Relevance</b>, <b>Temporal Relevance</b>, <b>Depth</b>, and <b>Data Consistency</b>.
