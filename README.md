@@ -15,7 +15,6 @@
     <a href="https://x.com/SentientAGI" target="_blank" style="margin: 2px;">
         <img alt="Twitter Follow" src="https://img.shields.io/badge/-SentientAGI-grey?logo=x&link=https%3A%2F%2Fx.com%2FSentientAGI%2F">
     </a>
-    </a>
     <a href="https://github.com/sentient-agi" target="_blank" style="margin: 2px;">
       <img alt="GitHub" src="https://img.shields.io/badge/Github-sentient_agi-181717?logo=github">
     </a>
@@ -92,9 +91,11 @@ Responses are scored on 7 binary (0/1) error dimensions:
 ### For `script.py`:
 - **CSV file** with:
   - `query` column (required)
-  - `{model_name}_response` columns for each model (required, e.g., `sentient_response`, `gpt5_response`)
+  - `{model_name}_response` columns for each model (required, e.g., `Sentient_response`, `gpt5_response`)
   - `tags` column (optional)
   - `{model_name}_chat_id` columns (optional, for trace context)
+
+**Model names are case-sensitive.** The value passed to `--models` must match the CSV column prefix exactly. For example, `--models Sentient` requires `Sentient_response` (not `sentient_response`).
 
 ### For `citation_hallucination_check.py`:
 - **CSV file** with `{model_name}_chat_id` columns (required, e.g., `Sentient_chat_id`, `gpt5_chat_id`)
@@ -102,7 +103,7 @@ Responses are scored on 7 binary (0/1) error dimensions:
 - Each trace JSON must contain spans with name `"Cyrpto Final Response"`
 
 ### For `run_error_taxonomy.py`:
-- **CSV file** with `query` and `{model}_response` (e.g. `sentient_response`); optional `{model}_chat_id` for trace context
+- **CSV file** with `query` and `{model}_response` (e.g. `Sentient_response`); optional `{model}_chat_id` for trace context
 - **Trace JSON files** (optional) at `output/<model>/traces/<chat_id>.json`
 
 ## How to Run

@@ -73,7 +73,7 @@ class LLMEvaluationSystem:
 
         Args:
             csv_path: Path to the CSV file containing evaluation data
-            models_to_evaluate: List of model names to evaluate (e.g., ['sentient', 'gemini_3_pro', 'gpt5', 'pplx_pro'])
+            models_to_evaluate: List of model names to evaluate (e.g., ['Sentient', 'gpt5', 'grok4', 'pplx'])
             num_workers: Number of parallel workers for processing queries (default: 3)
         """
         self.csv_path = csv_path

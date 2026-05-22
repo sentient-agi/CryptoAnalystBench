@@ -278,7 +278,7 @@ class ErrorTaxonomyEvaluator:
 async def main():
     parser = argparse.ArgumentParser(description="Error taxonomy evaluation (7 binary params)")
     parser.add_argument("--csv_path", type=str, required=True, help="Path to input CSV")
-    parser.add_argument("--model_column", type=str, required=True, help="Response column name (e.g. sentient_response)")
+    parser.add_argument("--model_column", type=str, required=True, help="Response column name (e.g. Sentient_response)")
     parser.add_argument("--max_workers", type=int, default=5)
     parser.add_argument("--max_queries", type=int, default=None)
     parser.add_argument("--output", type=str, default=None)
