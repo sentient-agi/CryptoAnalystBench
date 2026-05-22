@@ -8,13 +8,13 @@ import asyncio
 import json
 import logging
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Dict, List
 
 import pandas as pd
-import pytz
 
-from src.llms.judge import ChatJudgeLLM
+from src.llms.judge import ChatJudgeLLM, parse_llm_json_response
 from src.llms.llm import Fireworks_LLM
 
 logging.basicConfig(level=logging.INFO)
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 TRACE_SPAN_NAME = "Cyrpto Final Response"
 OUTPUT_BASE = "output"
 
-EVAL_DATETIME = datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%d %B %Y")
+EVAL_DATETIME = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %B %Y")
 
 TAXONOMY_FIELDS = [
     "staleness_missing_time_bounds",
@@ -216,12 +216,8 @@ class ErrorTaxonomyEvaluator:
         self.judge.clear_conversation_history()
         for attempt in range(3):
             try:
-                result = (await self.judge.a_generate(prompt)).strip()
-                if "```json" in result:
-                    result = result.split("```json")[1].split("```")[0].strip()
-                elif "```" in result:
-                    result = result.split("```")[1].split("```")[0].strip()
-                data = json.loads(result)
+                result = await self.judge.a_generate(prompt)
+                data = parse_llm_json_response(result)
                 out = {"query": query, "tags": tags_str}
                 for f in TAXONOMY_FIELDS:
                     if f not in data or "score" not in data[f] or "reasoning" not in data[f]:

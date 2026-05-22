@@ -42,7 +42,8 @@ class OpenAI_LLM(My_LLM):
         if not self.api_key:
             raise ValueError("API key must be provided either as parameter or OPENAI_API_KEY environment variable")
         self.tools = tools
-        self.client = openai.OpenAI(api_key=self.api_key)    
+        self.client = openai.OpenAI(api_key=self.api_key)
+        self.async_client = openai.AsyncOpenAI(api_key=self.api_key)
     
     def generate(self, prompt: str, **kwargs) -> str:
         """Generate response using OpenAI API."""
@@ -91,10 +92,10 @@ class OpenAI_LLM(My_LLM):
             }
             if "reasoning" in config:
                 response_params["reasoning"] = config["reasoning"]
-            response = await self.client.responses.create(**response_params)
+            response = await self.async_client.responses.create(**response_params)
             return response.output_text
         else:
-            response = await self.client.chat.completions.create(
+            response = await self.async_client.chat.completions.create(
                 model=self.model_id,
                 messages=[{"role": "user", "content": prompt}],
                 **{k: v for k, v in config.items() if k not in ['name', 'model_id']}
@@ -106,7 +107,7 @@ class OpenAI_LLM(My_LLM):
         """Generate response asynchronously using OpenAI chat completion API with message history."""
         config = self._merge_config(**kwargs)
         
-        response = await self.client.chat.completions.create(
+        response = await self.async_client.chat.completions.create(
             model=self.model_id,
             messages=messages,
             **{k: v for k, v in config.items() if k not in ['name', 'model_id']}
@@ -356,9 +357,9 @@ class Fireworks_LLM(My_LLM):
             **filtered_config
         }
         
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
+        # ssl_context = ssl.create_default_context()
+        # ssl_context.check_hostname = False
+        # ssl_context.verify_mode = ssl.CERT_NONE
         
         connector = aiohttp.TCPConnector(ssl=ssl_context)
         async with aiohttp.ClientSession(connector=connector) as session:
@@ -386,9 +387,9 @@ class Fireworks_LLM(My_LLM):
             **filtered_config
         }
         
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
+        # ssl_context = ssl.create_default_context()
+        # ssl_context.check_hostname = False
+        # ssl_context.verify_mode = ssl.CERT_NONE
         
         connector = aiohttp.TCPConnector(ssl=ssl_context)
         async with aiohttp.ClientSession(connector=connector) as session:

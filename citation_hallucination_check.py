@@ -19,6 +19,7 @@ import pandas as pd
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from src.llms.judge import extract_json_from_response
 from src.prompts.mapping import EVAL_PROMPT_MAPPING
 
 load_dotenv()
@@ -76,38 +77,6 @@ HALLUCINATION_OUTPUT_COLUMNS = [
 ]
 
 
-def _extract_json(text: str):
-    """
-    Extract JSON object from text by brace matching.
-    Returns (parsed_dict, start_idx) on success, (None, -1) on failure.
-    Tries candidates from innermost to outermost (reversed); first valid parse is returned.
-    """
-    brace_count = 0
-    start_idx = -1
-    candidates = []
-
-    for i, char in enumerate(text):
-        if char == "{":
-            if brace_count == 0:
-                start_idx = i
-            brace_count += 1
-        elif char == "}":
-            brace_count -= 1
-            if brace_count == 0 and start_idx != -1:
-                candidates.append((start_idx, i + 1, text[start_idx : i + 1]))
-                start_idx = -1
-
-    for start_idx, end_idx, candidate in reversed(candidates):
-        try:
-            parsed = json.loads(candidate)
-            if isinstance(parsed, dict) and ("summary" in parsed or "label" in parsed):
-                return parsed, start_idx
-        except json.JSONDecodeError:
-            continue
-
-    return None, -1
-
-
 def _parse_citation_eval_result(eval_result: str) -> dict:
     """
     Split eval_result into chain (text before JSON block) and parse citation JSON.
@@ -134,48 +103,12 @@ def _parse_citation_eval_result(eval_result: str) -> dict:
         return empty
 
     s = eval_result.strip()
-    chain = ""
-    parsed_json = None
-
-    idx = s.find("```json")
-    if idx >= 0:
-        start = idx + len("```json")
-        end = s.find("```", start)
-        if end == -1:
-            end = len(s)
-        block = s[start:end].strip()
-        chain = s[:idx].strip()
-        try:
-            parsed_json = json.loads(block)
-        except json.JSONDecodeError:
-            parsed_json = None
-
-    if parsed_json is None:
-        idx = s.find("```")
-        while idx >= 0:
-            start = idx + 3
-            end = s.find("```", start)
-            if end == -1:
-                end = len(s)
-            block = s[start:end].strip()
-            if block.startswith("json"):
-                block = block[4:].lstrip()
-            if block.startswith("{"):
-                try:
-                    parsed_json = json.loads(block)
-                    if isinstance(parsed_json, dict) and ("summary" in parsed_json or "label" in parsed_json):
-                        chain = s[:idx].strip()
-                        break
-                except json.JSONDecodeError:
-                    pass
-            idx = s.find("```", end + 3) if end < len(s) else -1
-
-    if parsed_json is None:
-        parsed_json, json_start = _extract_json(s)
-        if parsed_json is not None and json_start >= 0:
-            chain = s[:json_start].strip()
-
-    if parsed_json is None:
+    try:
+        parsed_json, json_start = extract_json_from_response(
+            s, required_keys=("summary", "label")
+        )
+        chain = s[:json_start].strip() if json_start >= 0 else ""
+    except ValueError:
         return empty
 
     summary = parsed_json.get("summary") or {}
@@ -220,48 +153,12 @@ def _parse_hallucination_eval_result(eval_result: str) -> dict:
         return empty
 
     s = eval_result.strip()
-    chain = ""
-    parsed_json = None
-
-    idx = s.find("```json")
-    if idx >= 0:
-        start = idx + len("```json")
-        end = s.find("```", start)
-        if end == -1:
-            end = len(s)
-        block = s[start:end].strip()
-        chain = s[:idx].strip()
-        try:
-            parsed_json = json.loads(block)
-        except json.JSONDecodeError:
-            parsed_json = None
-
-    if parsed_json is None:
-        idx = s.find("```")
-        while idx >= 0:
-            start = idx + 3
-            end = s.find("```", start)
-            if end == -1:
-                end = len(s)
-            block = s[start:end].strip()
-            if block.startswith("json"):
-                block = block[4:].lstrip()
-            if block.startswith("{"):
-                try:
-                    parsed_json = json.loads(block)
-                    if isinstance(parsed_json, dict) and ("summary" in parsed_json or "label" in parsed_json):
-                        chain = s[:idx].strip()
-                        break
-                except json.JSONDecodeError:
-                    pass
-            idx = s.find("```", end + 3) if end < len(s) else -1
-
-    if parsed_json is None:
-        parsed_json, json_start = _extract_json(s)
-        if parsed_json is not None and json_start >= 0:
-            chain = s[:json_start].strip()
-
-    if parsed_json is None:
+    try:
+        parsed_json, json_start = extract_json_from_response(
+            s, required_keys=("summary", "label")
+        )
+        chain = s[:json_start].strip() if json_start >= 0 else ""
+    except ValueError:
         return empty
 
     summary = parsed_json.get("summary") or {}

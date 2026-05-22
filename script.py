@@ -7,14 +7,14 @@ import ast
 from typing import Dict, List, Tuple, Any
 from dataclasses import dataclass
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import logging
 import random
 from itertools import permutations
 import argparse
 from pathlib import Path
 from src.llms.llm import Fireworks_LLM
-from src.llms.judge import ChatJudgeLLM
-import pytz
+from src.llms.judge import ChatJudgeLLM, parse_llm_json_response
 
 # Trace context for scoring: span name and output base (same as llm_evaluation_system_with_context)
 TRACE_SPAN_NAME = "Cyrpto Final Response"
@@ -40,7 +40,7 @@ def _trace_input_to_context(value: Any) -> str:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-eval_datetime = datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%d %B %Y")
+eval_datetime = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %B %Y")
 @dataclass
 class ModelScore:
     """Data class to store model scores and reasoning for each parameter."""
@@ -430,19 +430,10 @@ Always respond in valid JSON format as requested. All responses must be in Engli
                     prompt = self._create_scoring_prompt(query, response, eval_pos, trace_context=trace_context)
                     result = await judge_llm.a_generate(prompt)
                     
-                    # Clean and validate JSON response
-                    result = result.strip()
-                    if not result:
+                    if not result or not result.strip():
                         raise ValueError("Empty response from judge LLM")
-                    
-                    # Try to extract JSON from response if it's wrapped in markdown
-                    if "```json" in result:
-                        result = result.split("```json")[1].split("```")[0].strip()
-                    elif "```" in result:
-                        result = result.split("```")[1].split("```")[0].strip()
-                    
-                    # Parse JSON response
-                    scores_data = json.loads(result)
+
+                    scores_data = parse_llm_json_response(result)
                     
                     # Validate required fields
                     required_fields = ['temporal_relevance', 'data_consistency', 'depth', 'relevance']
@@ -502,18 +493,10 @@ Always respond in valid JSON format as requested. All responses must be in Engli
                 ranking_prompt = self._create_ranking_prompt(query, model_scores)
                 ranking_result = await judge_llm.a_generate(ranking_prompt)
                 
-                # Clean and validate JSON response
-                ranking_result = ranking_result.strip()
-                if not ranking_result:
+                if not ranking_result or not ranking_result.strip():
                     raise ValueError("Empty response from judge LLM")
-                
-                # Try to extract JSON from response if it's wrapped in markdown
-                if "```json" in ranking_result:
-                    ranking_result = ranking_result.split("```json")[1].split("```")[0].strip()
-                elif "```" in ranking_result:
-                    ranking_result = ranking_result.split("```")[1].split("```")[0].strip()
-                
-                ranking_data = json.loads(ranking_result)
+
+                ranking_data = parse_llm_json_response(ranking_result)
                 
                 # Validate required fields
                 if 'rankings' not in ranking_data:
@@ -669,7 +652,7 @@ Total Queries Evaluated: {total_queries}
         
         report += "\n### Average Scores by Model\n"
         for model, scores in avg_scores.items():
-            avg_total = sum(scores.values()) / 4
+            avg_total = sum(scores.values()) / len(scores)
             report += f"\n**{model}** (Avg Total: {avg_total:.2f})\n"
             report += f"- Temporal Relevance: {scores['TR']:.2f}\n"
             report += f"- Data Consistency: {scores['DC']:.2f}\n"
@@ -700,7 +683,7 @@ Total Queries Evaluated: {total_queries}
             output_path = f"data/output/final_evaluation_results_{timestamp}.csv"
         
         # Ensure output directory exists
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         
         # Create a mapping from query to original row data for preserving all fields
         query_to_original_data = {}
@@ -976,17 +959,19 @@ Total Queries Evaluated: {total_queries}
             batch_data = low_score_data[start_idx:end_idx]
             judge_llm.clear_conversation_history()
             prompt = self._create_error_analysis_batch_prompt(model_name, metric, batch_data, batch_idx + 1, num_batches)
-            for _ in range(3):
-                result = await judge_llm.a_generate(prompt)
-                result = result.strip()
-                if "```json" in result:
-                    result = result.split("```json")[1].split("```")[0].strip()
-                elif "```" in result:
-                    result = result.split("```")[1].split("```")[0].strip()
-                analysis_data = json.loads(result)
-                clusters = analysis_data.get('error_clusters', [])
-                all_batch_clusters.extend(clusters)
-                break
+            for attempt in range(3):
+                try:
+                    result = await judge_llm.a_generate(prompt)
+                    analysis_data = parse_llm_json_response(result)
+                    clusters = analysis_data.get('error_clusters', [])
+                    all_batch_clusters.extend(clusters)
+                    break
+                except Exception as e:
+                    logger.info(f"Error analyzing {model_name}/{metric} batch {batch_idx + 1} (attempt {attempt + 1}/3): {e}")
+                    if attempt < 2:
+                        await asyncio.sleep(1)
+                    else:
+                        logger.error(f"Failed error analysis for {model_name}/{metric} batch {batch_idx + 1} after 3 attempts")
         return all_batch_clusters
 
     async def _synthesize_error_clusters(
@@ -1000,17 +985,19 @@ Total Queries Evaluated: {total_queries}
             return all_batch_clusters, f"Found {len(all_batch_clusters)} error patterns from {total_low_scores} low-scoring entries."
         judge_llm.clear_conversation_history()
         prompt = self._create_error_synthesis_prompt(model_name, metric, all_batch_clusters, total_low_scores)
-        for _ in range(3):
-            result = await judge_llm.a_generate(prompt)
-            result = result.strip()
-            if "```json" in result:
-                result = result.split("```json")[1].split("```")[0].strip()
-            elif "```" in result:
-                result = result.split("```")[1].split("```")[0].strip()
-            synthesis_data = json.loads(result)
-            final_clusters = synthesis_data.get('error_clusters', [])
-            summary = synthesis_data.get('summary', '')
-            return final_clusters, summary
+        for attempt in range(3):
+            try:
+                result = await judge_llm.a_generate(prompt)
+                synthesis_data = parse_llm_json_response(result)
+                final_clusters = synthesis_data.get('error_clusters', [])
+                summary = synthesis_data.get('summary', '')
+                return final_clusters, summary
+            except Exception as e:
+                logger.info(f"Error synthesizing {model_name}/{metric} clusters (attempt {attempt + 1}/3): {e}")
+                if attempt < 2:
+                    await asyncio.sleep(1)
+                else:
+                    logger.error(f"Failed to synthesize error clusters for {model_name}/{metric} after 3 attempts")
         return all_batch_clusters[:10], "Synthesis incomplete."
 
     def _create_error_analysis_batch_prompt(self, model_name: str, metric: str, batch_data: List[Dict], batch_num: int, total_batches: int) -> str:
@@ -1231,7 +1218,7 @@ Respond with ONLY valid JSON:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_path = f"data/output/evaluation_statistics_{timestamp}.xlsx"
         
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         
         # Calculate statistics
         model_stats = self.calculate_per_model_statistics()
@@ -1369,7 +1356,7 @@ Example:
     
     # Input arguments
     parser.add_argument('--csv_path', type=str, 
-                       default='data/input/Token_Eval_Suite_mini_react_v5_1209.csv',
+                       default='data/input/sample_input.csv',
                        help='Path to the CSV file containing evaluation data')
     parser.add_argument('--models', type=str, nargs='+',
                        default=['sentient', 'grok4', 'pplx'],
