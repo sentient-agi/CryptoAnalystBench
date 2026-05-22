@@ -13,7 +13,10 @@ import random
 from itertools import permutations
 import argparse
 from pathlib import Path
+from dotenv import load_dotenv
 from src.llms.llm import Fireworks_LLM
+
+load_dotenv()
 from src.llms.judge import ChatJudgeLLM, parse_llm_json_response
 
 # Trace context for scoring: span name and output base (same as llm_evaluation_system_with_context)
@@ -1359,7 +1362,7 @@ Example:
                        default='data/input/sample_input.csv',
                        help='Path to the CSV file containing evaluation data')
     parser.add_argument('--models', type=str, nargs='+',
-                       default=['sentient', 'grok4', 'pplx'],
+                       default=['Sentient', 'gpt5', 'grok4', 'pplx'],
                        help='List of models to evaluate')
     parser.add_argument('--num_workers', type=int, default=3,
                        help='Number of parallel workers for processing queries')
@@ -1385,6 +1388,13 @@ async def main():
     # Step 1: Run evaluations
     logger.info("Starting evaluation of all queries...")
     await evaluator.evaluate_all_queries(args.max_queries)
+
+    if not evaluator.evaluations:
+        logger.error(
+            "No evaluations completed. Check FIREWORKS_API_KEY in .env and that your "
+            "--models names match CSV column prefixes exactly (e.g. Sentient → Sentient_response)."
+        )
+        raise SystemExit(1)
     
     # Step 2: Calculate tag metrics
     logger.info("Calculating tag metrics...")

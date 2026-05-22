@@ -13,9 +13,12 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import pandas as pd
+from dotenv import load_dotenv
 
 from src.llms.judge import ChatJudgeLLM, parse_llm_json_response
 from src.llms.llm import Fireworks_LLM
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -408,9 +408,9 @@ def process_traces_and_generate_xlsx(
     hallucination_user_prompt = hallucination_config["user_prompt"]
     hallucination_variables = hallucination_config["variables"]
 
-    api_key = os.getenv("FIREWORKS_API_KEY") or os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("FIREWORKS_API_KEY")
     if not api_key:
-        raise ValueError("FIREWORKS_API_KEY or OPENAI_API_KEY required")
+        raise ValueError("FIREWORKS_API_KEY required")
     client = OpenAI(api_key=api_key, base_url=BASE_URL)
 
     citation_rows = []

@@ -87,7 +87,7 @@ Responses are scored on 7 binary (0/1) error dimensions:
 ### Prerequisites
 - Python 3.12+
 - Virtual environment (recommended)
-- API key: `FIREWORKS_API_KEY` or `OPENAI_API_KEY` in `.env` file
+- API key: `FIREWORKS_API_KEY` in `.env` file
 
 ### For `script.py`:
 - **CSV file** with:
@@ -133,9 +133,11 @@ export FIREWORKS_API_KEY="your_api_key_here"
 python3.12 script.py --csv_path data/input/your_input_file.csv --models model1 model2 model3
 ```
 
+**Important:** Each name passed to `--models` must match the corresponding CSV column prefix exactly (case-sensitive). For example, `--models Sentient` requires a `Sentient_response` column (and optionally `Sentient_chat_id` for trace context). `sentient` and `Sentient` are treated as different models.
+
 **Example**:
 ```bash
-python3.12 script.py --csv_path data/input/sample_input.csv --models sentient gpt5 grok4 pplx
+python3.12 script.py --csv_path data/input/sample_input.csv --models Sentient gpt5 grok4 pplx
 ```
 
 **Optional arguments**:
@@ -153,14 +155,14 @@ The input CSV file must contain:
 
 - **Required columns**:
   - `query`: The crypto/blockchain question to evaluate
-  - `{model_name}_response`: Response column for each model (e.g., `sentient_response`, `gpt5_response`, `grok4_response`)
+  - `{model_name}_response`: Response column for each model (e.g., `Sentient_response`, `gpt5_response`, `grok4_response`). The `{model_name}` prefix must match the `--models` argument exactly, including capitalization.
 
 - **Optional columns**:
   - `tags`: Category tags for the query (e.g., "Macro & Narrative Context", "Comparative & Performance Analysis")
 
 **Example structure**:
 
-| query | tags | sentient_response | gpt5_response | grok4_response | pplx_response |
+| query | tags | Sentient_response | gpt5_response | grok4_response | pplx_response |
 |-------|------|-------------------|---------------|----------------|---------------|
 | What's the Bitcoin fear and greed index today? | Macro & Narrative Context | Response from Sentient... | Response from GPT5... | Response from Grok4... | Response from PPLX... |
 
