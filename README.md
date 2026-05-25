@@ -227,3 +227,23 @@ python run_error_taxonomy.py --csv_path <path_to_csv> --model_column <response_c
 **Input**: CSV with `query` and `{model}_response`; optional `{model}_chat_id` for trace context from `output/<model>/traces/`.
 
 **Output**: Excel (Evaluation Results + Summary) and CSV in `data/output/`.
+
+## Citation & References
+
+If you use CryptoAnalystBench in your research, please cite our work:
+
+```bibtex
+@misc{eswaran2026cryptoanalystbench,
+      title={CryptoAnalystBench: Failures in Multi-Tool Long-Form LLM Analysis}, 
+      author={Anushri Eswaran and Oleg Golev and Darshan Tank and Sidhant Rahi and Himanshu Tyagi},
+      year={2026},
+      eprint={2602.11304},
+      archivePrefix={arXiv},
+      primaryClass={cs.IR},
+      url={https://arxiv.org/abs/2602.11304}
+}
+```
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](./LICENSE) file for details.
