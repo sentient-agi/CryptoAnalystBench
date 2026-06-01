@@ -228,6 +228,18 @@ python run_error_taxonomy.py --csv_path <path_to_csv> --model_column <response_c
 
 **Output**: Excel (Evaluation Results + Summary) and CSV in `data/output/`.
 
+## Prompts
+
+The core evaluation prompts used by this harness:
+
+- **LLM-as-a-Judge Evaluation Prompt** — [`_create_scoring_prompt` in script.py](script.py#L194)
+- **Citation Verification Prompt** — [src/prompts/citation_check.py](src/prompts/citation_check.py)
+- **Hallucination Detection Task** — [src/prompts/hallucination_check.py](src/prompts/hallucination_check.py)
+
+## Agent Harness
+
+- **SERA-CryptoAgent** — [github.com/sentient-agi/SERA-CryptoAgent](https://github.com/sentient-agi/SERA-CryptoAgent)
+
 ## Citation & References
 
 If you use CryptoAnalystBench in your research, please cite our work:
