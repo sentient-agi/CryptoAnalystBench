@@ -240,6 +240,8 @@ The core evaluation prompts used by this harness:
 
 - **SERA-CryptoAgent** — [github.com/sentient-agi/SERA-CryptoAgent](https://github.com/sentient-agi/SERA-CryptoAgent)
 
+![SERA-CryptoAgent Harness](assets/SERA-CryptoAgent-Harness.png)
+
 ## Citation & References
 
 If you use CryptoAnalystBench in your research, please cite our work:
